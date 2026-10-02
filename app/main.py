@@ -42,7 +42,6 @@ load_dotenv(dotenv_path=_dotenv_path, override=True)
 # The API key is read from an environment variable so you never hardcode
 # secrets in the source code. See README.md for how to set it.
 API_KEY = os.getenv("MONITOR_API_KEY")
-print(API_KEY)
 
 if not API_KEY:
     # Fail fast: it's better to refuse to start than to run unprotected.
