@@ -14,12 +14,25 @@ See README.md for full setup and usage instructions.
 import os
 import time
 from datetime import datetime, timezone
+from typing import Annotated
 
 import psutil
-from fastapi import FastAPI, Depends, HTTPException, Security, status
+from fastapi import FastAPI, Depends, HTTPException, Header, Security, status
 from fastapi.security import APIKeyHeader
 import uvicorn
-import multiprocessing
+from dotenv import load_dotenv
+import socket
+
+
+# import multiprocessing
+
+def get_dotenv_path():
+    return '/etc/.wrkk-env' if (os.name == "posix") else './.env.example'
+  
+
+_dotenv_path = get_dotenv_path()
+# load custom env file
+load_dotenv(dotenv_path=_dotenv_path, override=True)
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +41,8 @@ import multiprocessing
 
 # The API key is read from an environment variable so you never hardcode
 # secrets in the source code. See README.md for how to set it.
-API_KEY = os.environ.get("MONITOR_API_KEY")
+API_KEY = os.getenv("MONITOR_API_KEY")
+print(API_KEY)
 
 if not API_KEY:
     # Fail fast: it's better to refuse to start than to run unprotected.
@@ -53,6 +67,23 @@ def verify_api_key(provided_key : str = Security(api_key_header)) -> str:
         )
     return provided_key
 
+# get a free port from the os.
+def get_free_port():
+   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+   s.bind(('', 0))
+   port = s.getsockname()[1]
+   s.close()
+   return port
+
+
+# ---------------------------------------------------------------------------
+# Utils
+# ---------------------------------------------------------------------------
+
+def bytes_to_megabytes(bytes_value):
+  return bytes_value / (1024 ** 2)
+
+
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
@@ -61,6 +92,8 @@ app = FastAPI(
     title="Linux Monitor API",
     description="A minimal psutil-powered API for monitoring a Linux host.",
     version="1.0.0",
+    docs_url=None, # Disable Swagger UI
+    redoc_url=None # Disable ReDoc
 )
 
 # All routes below are grouped under /api and require a valid API key.
@@ -79,11 +112,29 @@ def health(_: str = Depends(verify_api_key)):
 # ---------------------------------------------------------------------------
 # CPU
 # ---------------------------------------------------------------------------
+
+def convert_to_percent(load_tuple, log_cpu_count):
+  percent_list = []
+  for load in load_tuple:
+    percent = (load / log_cpu_count) * 100
+    percent_list.append(percent)
+
+  return tuple(percent_list)
+
 @app.get("/api/cpu")
 def get_cpu(_: str = Depends(verify_api_key)):
     """CPU usage and basic info, similar to `top`/`mpstat`."""
+    
+    # simulating an mpstat cmd
+    cpu_times = psutil.cpu_times()
+    cpu_times_labels = ["user", "system", "idle", "nice", "iowait", 
+                        "irq", "softirq", "steal", "guest", "guest_nice"]
+    
+    # Return CPU frequency as a namedtuple including current, min and max frequency expressed in Mhz.
     freq = psutil.cpu_freq()
+    
     return {
+        "mpstat" : dict(zip(cpu_times_labels, cpu_times)),
         "physical_cores": psutil.cpu_count(logical=False),
         "logical_cores": psutil.cpu_count(logical=True),
         "usage_percent_per_core": psutil.cpu_percent(percpu=True, interval=1),
@@ -93,7 +144,7 @@ def get_cpu(_: str = Depends(verify_api_key)):
             "min": freq.min if freq else None,
             "max": freq.max if freq else None,
         },
-        "load_average": psutil.getloadavg(),  # (1min, 5min, 15min)
+        "load_average": convert_to_percent(psutil.getloadavg(), psutil.cpu_count(logical=True)) # (1min, 5min, 15min)
     }
 
 # ---------------------------------------------------------------------------
@@ -106,16 +157,16 @@ def get_memory(_: str = Depends(verify_api_key)):
     swap = psutil.swap_memory()
     return {
         "virtual_memory": {
-            "total": virtual.total,
-            "available": virtual.available,
-            "used": virtual.used,
-            "free": virtual.free,
+            "total": bytes_to_megabytes(virtual.total),
+            "available": bytes_to_megabytes(virtual.available),
+            "used": bytes_to_megabytes(virtual.used),
+            "free": bytes_to_megabytes(virtual.free),
             "percent": virtual.percent,
         },
         "swap_memory": {
-            "total": swap.total,
-            "used": swap.used,
-            "free": swap.free,
+            "total": bytes_to_megabytes(swap.total),
+            "used": bytes_to_megabytes(swap.used),
+            "free": bytes_to_megabytes(swap.free),
             "percent": swap.percent,
         },
     }
@@ -135,9 +186,9 @@ def get_disk(_: str = Depends(verify_api_key)):
                     "device": part.device,
                     "mountpoint": part.mountpoint,
                     "fstype": part.fstype,
-                    "total": usage.total,
-                    "used": usage.used,
-                    "free": usage.free,
+                    "total": bytes_to_megabytes(usage.total),
+                    "used": bytes_to_megabytes(usage.used),
+                    "free": bytes_to_megabytes(usage.free),
                     "percent": usage.percent,
                 }
             )
@@ -151,8 +202,8 @@ def get_disk(_: str = Depends(verify_api_key)):
         "io_counters": {
             "read_count": io_counters.read_count,
             "write_count": io_counters.write_count,
-            "read_bytes": io_counters.read_bytes,
-            "write_bytes": io_counters.write_bytes,
+            "read_bytes": bytes_to_megabytes(io_counters.read_bytes),
+            "write_bytes": bytes_to_megabytes(io_counters.write_bytes),
         }
         if io_counters
         else None,
@@ -162,14 +213,15 @@ def get_disk(_: str = Depends(verify_api_key)):
 # Network
 # ---------------------------------------------------------------------------
 @app.get("/api/network")
-def get_network(_: str = Depends(verify_api_key)):
+def get_network(_: str = Depends(verify_api_key), list_interfaces : Annotated[str | None, Header()] = None):
     """Network IO counters and interface addresses (similar to `ifconfig`/`netstat`)."""
     io_counters = psutil.net_io_counters()
     addrs = psutil.net_if_addrs()
     stats = psutil.net_if_stats()
 
     interfaces = {}
-    for name, addr_list in addrs.items():
+    if (list_interfaces):
+      for name, addr_list in addrs.items():
         interfaces[name] = {
             "addresses": [
                 {
@@ -186,12 +238,13 @@ def get_network(_: str = Depends(verify_api_key)):
 
     return {
         "io_counters": {
-            "bytes_sent": io_counters.bytes_sent,
-            "bytes_recv": io_counters.bytes_recv,
+            "bytes_sent": bytes_to_megabytes(io_counters.bytes_sent),
+            "bytes_recv": bytes_to_megabytes(io_counters.bytes_recv),
             "packets_sent": io_counters.packets_sent,
             "packets_recv": io_counters.packets_recv,
             "errin": io_counters.errin,
             "errout": io_counters.errout,
+            "mbps" : bytes_to_megabytes((io_counters.bytes_sent + io_counters.bytes_recv) * 8)
         },
         "interfaces": interfaces,
     }
@@ -242,6 +295,7 @@ def get_system(_: str = Depends(verify_api_key)):
         "users": users,
     }
 
+
 if __name__ == "__main__":
   # multiprocessing.freeze_support() # Required for Windows - ignore for now
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+  uvicorn.run(app, host="0.0.0.0", port=get_free_port())

@@ -49,7 +49,7 @@ export $(grep -v '^#' .env | xargs)
 ## 4. Run the app
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+py app/main.py
 ```
 
 - `--host 0.0.0.0` makes it reachable from other machines on your network.
@@ -57,6 +57,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - `--port 8000` is the port it listens on; change it if needed.
 - Add `--reload` while developing, so the server restarts automatically when
   you edit `main.py`.
+
+### for dev purposes only - disabled in prod ###  
 Once running, open http://localhost:8000/docs in a browser: FastAPI
 auto-generates interactive API documentation (Swagger UI) where you can try
 out every endpoint. You'll need to click "Authorize" there and paste your API
@@ -79,7 +81,7 @@ curl -H "X-API-Key: your-secret-value" http://localhost:8000/api/memory
 
 | Endpoint          | Description                                              | Shell equivalent      |
 |-------------------|-----------------------------------------------------------|------------------------|
-| `GET /api/health`   | Basic liveness check (no API key required)               | -                      |
+| `GET /api/health`   | Basic liveness check                | -                      |
 | `GET /api/cpu`      | CPU core count, per-core usage %, frequency, load average | `top`, `mpstat`        |
 | `GET /api/memory`   | RAM and swap usage                                        | `free -h`              |
 | `GET /api/disk`     | Disk partitions/usage and IO counters                     | `df -h`, `iostat`      |
