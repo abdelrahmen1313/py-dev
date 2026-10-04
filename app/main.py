@@ -22,17 +22,12 @@ from fastapi.security import APIKeyHeader
 import uvicorn
 from dotenv import load_dotenv
 import socket
-
-
 # import multiprocessing
 
-def get_dotenv_path():
-    return '/etc/.wrkk-env' if (os.name == "posix") else './.env.example'
-  
-
-_dotenv_path = get_dotenv_path()
 # load custom env file
-load_dotenv(dotenv_path=_dotenv_path, override=True)
+env_file = os.environ["WRKK_ENV_FILE"]
+
+load_dotenv(dotenv_path=env_file, override=True)
 
 
 # ---------------------------------------------------------------------------
